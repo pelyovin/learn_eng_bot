@@ -1,11 +1,11 @@
 import random
 
+from sqlalchemy import func, or_
+from tg_bot_db import Session, Translate, TargetWord, User
 from telebot import types, TeleBot, custom_filters
 from telebot.storage import StateMemoryStorage
 from telebot.handler_backends import State, StatesGroup
 
-
-print('Start telegram bot...')
 
 state_storage = StateMemoryStorage()
 token_bot = ''
@@ -14,6 +14,41 @@ bot = TeleBot(token_bot, state_storage=state_storage)
 known_users = []
 userStep = {}
 buttons = []
+
+
+def all_users():
+    session = Session()
+    kn_users = session.query(User.tg_id).all()
+    session.close()
+    return kn_users
+
+
+def add_user(id):
+    session = Session()
+    if (id,) not in session.query(User.tg_id).all():
+        id = User(tg_id=id)
+        session.add(id)
+        session.commit()
+    session.close()
+
+
+def choose_target_word(user_id):
+    session = Session()
+    choose_word = ''.join(*(session.query(TargetWord.word).join(TargetWord.user).
+                            filter(or_(TargetWord.user_tg_id == 0, TargetWord.user_tg_id == user_id)).
+                            order_by(func.random()).first()))
+    global word_id
+    word_id = session.query(Translate.id).join(Translate.target_word).filter(TargetWord.word == choose_word)[0]
+    session.close()
+    return choose_word
+
+
+def translate_word():
+    session = Session()
+    translate = ''.join(*(session.query(Translate.translate).
+                        join(Translate.target_word).filter(Translate.target_word_id == word_id[0]).first()))
+    session.close()
+    return translate
 
 
 def show_hint(*lines):
@@ -26,7 +61,7 @@ def show_target(data):
 
 class Command:
     ADD_WORD = 'Добавить слово ➕'
-    DELETE_WORD = 'Удалить слово 🔙'
+    DELETE_WORD = 'Удалить слово🔙'
     NEXT = 'Дальше ⏭'
 
 
@@ -46,10 +81,12 @@ def get_user_step(uid):
         return 0
 
 
-@bot.message_handlers(commands=['cards', 'start'])
+@bot.message_handler(commands=['cards', 'start'])
 def create_cards(message):
+    user_id = message.from_user.id
     cid = message.chat.id
-    if cid not in known_users:
+    if (user_id,) not in all_users():
+        add_user(user_id)
         known_users.append(cid)
         userStep[cid] = 0
         bot.send_message(cid, "Hello, stranger, let study English...")
@@ -57,13 +94,13 @@ def create_cards(message):
 
     global buttons
     buttons = []
-    target_word = 'Peace'  # брать из БД
-    translate = 'Мир'  # брать из БД
+    target_word = choose_target_word(user_id)  # брать из БД
+    translate = translate_word()  # брать из БД
     target_word_btn = types.KeyboardButton(target_word)
     buttons.append(target_word_btn)
-    others = ['Green', 'White', 'Hello', 'Car']  # брать из БД
-    other_word_btns = [types.KeyboardButton(word) for word in others]
-    buttons.extend(other_word_btns)
+    others = ['Green', 'White', 'Car']  # брать из БД
+    other_words_btns = [types.KeyboardButton(word) for word in others]
+    buttons.extend(other_words_btns)
     random.shuffle(buttons)
     next_btn = types.KeyboardButton(Command.NEXT)
     add_word_btn = types.KeyboardButton(Command.ADD_WORD)
@@ -77,29 +114,29 @@ def create_cards(message):
     bot.set_state(message.from_user.id, MyStates.target_word, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['target_word'] = target_word
-        data['translate_ward'] = translate
+        data['translate_word'] = translate
         data['other_words'] = others
 
 
-@bot.message_handlers(func=lambda message: message.txt == Command.NEXT)
+@bot.message_handler(func=lambda message: message.text == Command.NEXT)
 def next_card(message):
     create_cards(message)
 
 
-@bot.message_handlers(func=lambda message: message.txt == Command.DELETE_WORD)
+@bot.message_handler(func=lambda message: message.text == Command.DELETE_WORD)
 def delete_word(message):
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         print(data['target_word'])  # удалить из БД
 
 
-@bot.message_handlers(func=lambda message: message.txt == Command.ADD_WORD)
+@bot.message_handler(func=lambda message: message.text == Command.ADD_WORD)
 def add_word(message):
     cid = message.chat.id
     userStep[cid] = 1
     print(message.text)  # сохранить в БД
 
 
-@bot.message_handlers(func=lambda message: True, content_types=['text'])
+@bot.message_handler(func=lambda message: True, content_types=['text'])
 def message_reply(message):
     text = message.text
     markup = types.ReplyKeyboardMarkup(row_width=2)
@@ -108,10 +145,10 @@ def message_reply(message):
         if text == target_word:
             hint = show_target(data)
             hint_text = ["Отлично!❤", hint]
-            next_btn = types.KeyboardButton(Command.NEXT)
-            add_word_btn = types.KeyboardButton(Command.ADD_WORD)
-            delete_word_btn = types.KeyboardButton(Command.DELETE_WORD)
-            buttons.extend([next_btn, add_word_btn, delete_word_btn])
+            # next_btn = types.KeyboardButton(Command.NEXT)
+            # add_word_btn = types.KeyboardButton(Command.ADD_WORD)
+            # delete_word_btn = types.KeyboardButton(Command.DELETE_WORD)
+            # buttons.extend([next_btn, add_word_btn, delete_word_btn])
             hint = show_hint(*hint_text)
         else:
             for btn in buttons:
@@ -124,6 +161,7 @@ def message_reply(message):
     bot.send_message(message.chat.id, hint, reply_markup=markup)
 
 
-bot.add_custom_filter(custom_filters.StateFilter(bot))
-
-bot.infinity_polling(skip_pending=True)
+if __name__ == '__main__':
+    print('Start telegram bot...')
+    bot.add_custom_filter(custom_filters.StateFilter(bot))
+    bot.infinity_polling(skip_pending=True)
