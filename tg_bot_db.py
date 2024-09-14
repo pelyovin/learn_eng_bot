@@ -1,6 +1,6 @@
 import sqlalchemy
 import sqlalchemy as sq
-from sqlalchemy import func, or_
+# from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 Base = declarative_base()

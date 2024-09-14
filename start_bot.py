@@ -1,11 +1,10 @@
 import random
 
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_
 from tg_bot_db import Session, Translate, TargetWord, User
 from telebot import types, TeleBot, custom_filters
 from telebot.storage import StateMemoryStorage
 from telebot.handler_backends import State, StatesGroup
-
 
 state_storage = StateMemoryStorage()
 token_bot = ''
@@ -46,7 +45,7 @@ def choose_target_word(user_id):
 def translate_word():
     session = Session()
     translate = ''.join(*(session.query(Translate.translate).
-                        join(Translate.target_word).filter(Translate.target_word_id == word_id[0]).first()))
+                          join(Translate.target_word).filter(Translate.target_word_id == word_id[0]).first()))
     session.close()
     return translate
 
@@ -130,10 +129,30 @@ def delete_word(message):
 
 
 @bot.message_handler(func=lambda message: message.text == Command.ADD_WORD)
-def add_word(message):
+def ask_word(message):
     cid = message.chat.id
     userStep[cid] = 1
-    print(message.text)  # сохранить в БД
+    bot.send_message(cid, 'Введите слово, которое хотите выучить и его перевод через пробел')
+    bot.register_next_step_handler(message, add_word)
+
+
+def add_word(message):
+    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+        user_id = message.from_user.id
+        user_word = message.text
+        session = Session()
+        target_word = TargetWord(word=user_word.split()[0].title().strip(), user_tg_id=message.from_user.id)
+        session.add(target_word)
+        session.commit()
+        target_id = session.query(TargetWord.id).filter(and_(TargetWord.word == user_word.split()[0].title().strip(),
+                                                             TargetWord.user_tg_id == user_id)).first()[0]
+        translate = Translate(translate=user_word.split()[1].title().strip(), target_word_id=target_id)
+        session.add(translate)
+        session.commit()
+        session.close()
+        bot.send_message(message.chat.id,
+                         f"""Слово '{user_word.split()[0]}' успешно сохранено! 
+Продолжи угадывать слово: 🇷🇺'{data['translate_word']}' или нажми Дальше ⏭ для следующего слова""")
 
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
