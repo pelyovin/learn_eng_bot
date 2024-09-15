@@ -123,13 +123,44 @@ def next_card(message):
 
 
 @bot.message_handler(func=lambda message: message.text == Command.DELETE_WORD)
-def delete_word(message):
+def ask_word_to_delete(message):
+    session = Session()
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        print(data['target_word'])  # удалить из БД
+        cid = message.chat.id
+        if (session.query(TargetWord.user_tg_id).filter(TargetWord.word == data['target_word']).first()) == (0,):
+            bot.send_message(cid, f"""Вы можете удалять только те слова, которые добавили сами. 
+Продолжите угадывать слово: 🇷🇺'{data['translate_word']}' или нажми Дальше ⏭ для следующего слова""")
+        else:
+            bot.send_message(cid,
+                             f"""Вы уверены, что хотите удалить слово "{show_target(data)}"? 
+Напишите "Да" для удаления или нажмите Дальше ⏭ для продолжения""")
+            bot.register_next_step_handler(message, delete_word)
+    session.close()
+
+
+def delete_word(message):
+    user_id = message.chat.id
+    user_answer = message.text
+    session = Session()
+    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+        if user_answer.strip().lower() == 'да':
+            target_id = session.query(TargetWord.id).filter(
+                and_(TargetWord.word == data['target_word'], TargetWord.user_tg_id == user_id)).first()
+            if session.query(TargetWord.user_tg_id).filter(and_(TargetWord.word == data['target_word'],
+                                                                TargetWord.user_tg_id != 0,
+                                                                TargetWord.user_tg_id == user_id)).first() is not None:
+                session.query(Translate).filter(Translate.target_word_id == target_id[0]).delete()
+                session.commit()
+                session.query(TargetWord).filter(
+                    and_(TargetWord.word == data['target_word'], TargetWord.user_tg_id == user_id)).delete()
+                session.commit()
+                bot.send_message(message.chat.id, f"Слово успешно удалено. Нажмите Дальше ⏭ ")
+
+    session.close()
 
 
 @bot.message_handler(func=lambda message: message.text == Command.ADD_WORD)
-def ask_word(message):
+def ask_word_to_add(message):
     cid = message.chat.id
     userStep[cid] = 1
     bot.send_message(cid, 'Введите слово, которое хотите выучить и его перевод через пробел')
@@ -152,7 +183,7 @@ def add_word(message):
         session.close()
         bot.send_message(message.chat.id,
                          f"""Слово '{user_word.split()[0]}' успешно сохранено! 
-Продолжи угадывать слово: 🇷🇺'{data['translate_word']}' или нажми Дальше ⏭ для следующего слова""")
+Продолжите угадывать слово: 🇷🇺'{data['translate_word']}' или нажми Дальше ⏭ для следующего слова""")
 
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
